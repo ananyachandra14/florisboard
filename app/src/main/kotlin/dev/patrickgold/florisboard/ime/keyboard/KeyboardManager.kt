@@ -60,7 +60,10 @@ import dev.patrickgold.florisboard.lib.ext.ExtensionComponentName
 import dev.patrickgold.florisboard.lib.titlecase
 import dev.patrickgold.florisboard.lib.uppercase
 import dev.patrickgold.florisboard.lib.util.InputMethodUtils
+import dev.patrickgold.florisboard.ime.stt.FallbackSttProvider
+import dev.patrickgold.florisboard.ime.stt.SttState
 import dev.patrickgold.florisboard.nlpManager
+import dev.patrickgold.florisboard.sttManager
 import dev.patrickgold.florisboard.subtypeManager
 import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicInteger
@@ -90,6 +93,7 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
     private val editorInstance by context.editorInstance()
     private val extensionManager by context.extensionManager()
     private val nlpManager by context.nlpManager()
+    private val sttManager by context.sttManager()
     private val subtypeManager by context.subtypeManager()
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -739,7 +743,18 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
             KeyCode.IME_UI_MODE_TEXT -> activeState.imeUiMode = ImeUiMode.TEXT
             KeyCode.IME_UI_MODE_MEDIA -> activeState.imeUiMode = ImeUiMode.MEDIA
             KeyCode.IME_UI_MODE_CLIPBOARD -> activeState.imeUiMode = ImeUiMode.CLIPBOARD
-            KeyCode.VOICE_INPUT -> FlorisImeService.switchToVoiceInputMethod()
+            KeyCode.VOICE_INPUT -> {
+                val provider = sttManager.activeProvider.value
+                if (provider != null && provider !is FallbackSttProvider) {
+                    when (sttManager.sttState.value) {
+                        is SttState.Idle -> sttManager.startListening()
+                        is SttState.Listening -> sttManager.stopListening()
+                        else -> sttManager.cancelListening()
+                    }
+                } else {
+                    FlorisImeService.switchToVoiceInputMethod()
+                }
+            }
             KeyCode.KANA_SWITCHER -> handleKanaSwitch()
             KeyCode.KANA_HIRA -> handleKanaHira()
             KeyCode.KANA_KATA -> handleKanaKata()

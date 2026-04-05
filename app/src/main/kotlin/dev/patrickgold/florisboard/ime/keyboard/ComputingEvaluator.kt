@@ -142,7 +142,9 @@ fun ComputingEvaluator.computeLabel(data: KeyData): String? {
             KeyCode.PHONE_WAIT -> evaluator.context()?.getString(R.string.key__phone_wait)
             KeyCode.SPACE, KeyCode.CJK_SPACE -> {
                 when (evaluator.keyboard.mode) {
-                    KeyboardMode.CHARACTERS -> "Floris (voice)"
+                    KeyboardMode.CHARACTERS -> evaluator.subtype.primaryLocale.let { locale ->
+                        computeLanguageDisplayName(locale, evaluator.displayLanguageNamesIn())
+                    }
                     else -> null
                 }
             }
