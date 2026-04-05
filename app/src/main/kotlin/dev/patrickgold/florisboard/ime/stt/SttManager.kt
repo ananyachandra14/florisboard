@@ -18,6 +18,8 @@ package dev.patrickgold.florisboard.ime.stt
 
 import android.content.Context
 import dev.patrickgold.florisboard.editorInstance
+import dev.patrickgold.florisboard.ime.stt.deepgram.DeepgramAdapter
+import dev.patrickgold.florisboard.ime.stt.deepgram.DeepgramConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -31,6 +33,12 @@ class SttManager(context: Context) {
     private val editorInstance by context.editorInstance()
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    init {
+        if (DeepgramConfig.API_KEY.isNotBlank()) {
+            setActiveProvider(DeepgramAdapter(DeepgramConfig.API_KEY))
+        }
+    }
 
     private val _activeProvider = MutableStateFlow<SttProvider?>(null)
     val activeProvider: StateFlow<SttProvider?> = _activeProvider.asStateFlow()
