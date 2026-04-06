@@ -61,7 +61,6 @@ import dev.patrickgold.florisboard.lib.titlecase
 import dev.patrickgold.florisboard.lib.uppercase
 import dev.patrickgold.florisboard.lib.util.InputMethodUtils
 import dev.patrickgold.florisboard.ime.stt.FallbackSttProvider
-import dev.patrickgold.florisboard.ime.stt.SttState
 import dev.patrickgold.florisboard.nlpManager
 import dev.patrickgold.florisboard.sttManager
 import dev.patrickgold.florisboard.subtypeManager
@@ -690,6 +689,12 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
             KeyCode.MOVE_END_OF_LINE -> {
                 editorInstance.massSelection.begin()
             }
+            KeyCode.VOICE_INPUT -> {
+                val provider = sttManager.activeProvider.value
+                if (provider != null && provider !is FallbackSttProvider) {
+                    sttManager.startListening()
+                }
+            }
             KeyCode.SHIFT -> handleShiftDown(data)
         }
     }
@@ -743,18 +748,7 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
             KeyCode.IME_UI_MODE_TEXT -> activeState.imeUiMode = ImeUiMode.TEXT
             KeyCode.IME_UI_MODE_MEDIA -> activeState.imeUiMode = ImeUiMode.MEDIA
             KeyCode.IME_UI_MODE_CLIPBOARD -> activeState.imeUiMode = ImeUiMode.CLIPBOARD
-            KeyCode.VOICE_INPUT -> {
-                val provider = sttManager.activeProvider.value
-                if (provider != null && provider !is FallbackSttProvider) {
-                    when (sttManager.sttState.value) {
-                        is SttState.Idle -> sttManager.startListening()
-                        is SttState.Listening -> sttManager.stopListening()
-                        else -> sttManager.cancelListening()
-                    }
-                } else {
-                    FlorisImeService.switchToVoiceInputMethod()
-                }
-            }
+            KeyCode.VOICE_INPUT -> sttManager.stopListening()
             KeyCode.KANA_SWITCHER -> handleKanaSwitch()
             KeyCode.KANA_HIRA -> handleKanaHira()
             KeyCode.KANA_KATA -> handleKanaKata()
@@ -845,6 +839,7 @@ class KeyboardManager(context: Context) : InputKeyEventReceiver {
             KeyCode.MOVE_END_OF_LINE -> {
                 editorInstance.massSelection.end()
             }
+            KeyCode.VOICE_INPUT -> sttManager.stopListening()
             KeyCode.SHIFT -> handleShiftCancel()
         }
     }

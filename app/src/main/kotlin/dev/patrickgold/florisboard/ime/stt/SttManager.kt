@@ -20,6 +20,10 @@ import android.content.Context
 import dev.patrickgold.florisboard.editorInstance
 import dev.patrickgold.florisboard.ime.stt.deepgram.DeepgramAdapter
 import dev.patrickgold.florisboard.ime.stt.deepgram.DeepgramConfig
+import dev.patrickgold.florisboard.lib.devtools.LogTopic
+import dev.patrickgold.florisboard.lib.devtools.flogError
+import dev.patrickgold.florisboard.lib.devtools.flogInfo
+import dev.patrickgold.florisboard.lib.devtools.flogWarning
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,42 +31,42 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.florisboard.lib.kotlin.collectLatestIn
 
 class SttManager(context: Context) {
+    private companion object {
+        private const val LOG_PREFIX = "Ananya"
+    }
+
     private val editorInstance by context.editorInstance()
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-
-    init {
-        if (DeepgramConfig.API_KEY.isNotBlank()) {
-            setActiveProvider(DeepgramAdapter(DeepgramConfig.API_KEY))
-        }
-    }
-
     private val _activeProvider = MutableStateFlow<SttProvider?>(null)
     val activeProvider: StateFlow<SttProvider?> = _activeProvider.asStateFlow()
 
     private val _sttState = MutableStateFlow<SttState>(SttState.Idle)
     val sttState: StateFlow<SttState> = _sttState.asStateFlow()
 
-    /**
-     * Register and activate an STT provider. Calls [SttProvider.create] and begins
-     * observing its state. Only one provider is active at a time; the previous one
-     * is destroyed.
-     */
-    fun setActiveProvider(provider: SttProvider) {
-        scope.launch {
-            _activeProvider.value?.destroy()
-            provider.create()
-            _activeProvider.value = provider
+    init {
+        if (DeepgramConfig.API_KEY.isNotBlank()) {
+            flogInfo(LogTopic.STT) { "$LOG_PREFIX Deepgram API key detected, activating Deepgram STT provider" }
+            activateProvider(DeepgramAdapter(DeepgramConfig.API_KEY))
+        } else {
+            flogWarning(LogTopic.STT) { "$LOG_PREFIX No Deepgram API key configured, STT provider remains inactive" }
+        }
+    }
 
-            // Mirror the provider's state into the manager's public state flow
+    private fun activateProvider(provider: SttProvider) {
+        _activeProvider.value = provider
+        scope.launch {
+            provider.create()
+
             provider.sttState.collectLatestIn(scope) { state ->
+                flogInfo(LogTopic.STT) { "$LOG_PREFIX Provider state changed: $state" }
                 _sttState.value = state
             }
 
-            // If streaming, observe results and commit text
             if (provider is StreamingSttProvider) {
                 provider.resultFlow.collectLatestIn(scope) { result ->
                     handleResult(result)
@@ -72,12 +76,27 @@ class SttManager(context: Context) {
     }
 
     /**
+     * Register and activate an STT provider. Calls [SttProvider.create] and begins
+     * observing its state. Only one provider is active at a time; the previous one
+     * is destroyed.
+     */
+    fun setActiveProvider(provider: SttProvider) {
+        scope.launch {
+            flogInfo(LogTopic.STT) { "$LOG_PREFIX Switching active STT provider to ${provider.providerId}" }
+            _activeProvider.value?.destroy()
+            activateProvider(provider)
+        }
+    }
+
+    /**
      * Start an STT session. Called when the voice input key is pressed.
      */
     fun startListening() {
         val provider = _activeProvider.value ?: return
         scope.launch {
+            flogInfo(LogTopic.STT) { "$LOG_PREFIX Starting STT session with provider=${provider.providerId}" }
             if (!provider.isAvailable()) {
+                flogWarning(LogTopic.STT) { "$LOG_PREFIX STT provider ${provider.providerId} is not available" }
                 _sttState.value = SttState.Error(SttError.ServiceUnavailable())
                 return@launch
             }
@@ -97,6 +116,7 @@ class SttManager(context: Context) {
     fun stopListening() {
         val provider = _activeProvider.value ?: return
         scope.launch {
+            flogInfo(LogTopic.STT) { "$LOG_PREFIX Stopping STT session for provider=${provider.providerId}" }
             when (provider) {
                 is StreamingSttProvider -> provider.stopListening()
                 is BatchSttProvider -> provider.cancel()
@@ -110,6 +130,7 @@ class SttManager(context: Context) {
     fun cancelListening() {
         val provider = _activeProvider.value ?: return
         scope.launch {
+            flogInfo(LogTopic.STT) { "$LOG_PREFIX Cancelling STT session for provider=${provider.providerId}" }
             when (provider) {
                 is StreamingSttProvider -> provider.cancelListening()
                 is BatchSttProvider -> provider.cancel()
@@ -117,13 +138,31 @@ class SttManager(context: Context) {
         }
     }
 
-    private fun handleResult(result: SttResult) {
+    private suspend fun handleResult(result: SttResult) {
         when (result) {
-            is SttResult.Final -> editorInstance.commitText(result.text)
+            is SttResult.Final -> {
+                flogInfo(LogTopic.STT) {
+                    "$LOG_PREFIX Final STT text received length=${result.text.length} text='${result.text.take(120)}'"
+                }
+                val committed = withContext(Dispatchers.Main.immediate) {
+                    editorInstance.commitText(result.text)
+                }
+                if (committed) {
+                    flogInfo(LogTopic.STT) { "$LOG_PREFIX Committed STT text into the active editor" }
+                } else {
+                    flogError(LogTopic.STT) { "$LOG_PREFIX Failed to commit STT text into the active editor" }
+                }
+            }
             is SttResult.Partial -> {
+                flogInfo(LogTopic.STT) {
+                    "$LOG_PREFIX Partial STT result length=${result.text.length} text='${result.text.take(120)}'"
+                }
                 // TODO: update composing text so user sees interim results
             }
-            is SttResult.Error -> _sttState.value = SttState.Error(result.error)
+            is SttResult.Error -> {
+                flogError(LogTopic.STT) { "$LOG_PREFIX STT error result received: ${result.error}" }
+                _sttState.value = SttState.Error(result.error)
+            }
             is SttResult.Empty -> { /* no-op */ }
         }
     }
@@ -133,6 +172,7 @@ class SttManager(context: Context) {
      */
     fun destroy() {
         scope.launch {
+            flogInfo(LogTopic.STT) { "$LOG_PREFIX Destroying STT manager and active provider" }
             _activeProvider.value?.destroy()
             _activeProvider.value = null
         }

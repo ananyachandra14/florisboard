@@ -24,6 +24,10 @@ import dev.patrickgold.florisboard.ime.stt.StreamingSttProvider
 import dev.patrickgold.florisboard.ime.stt.SttError
 import dev.patrickgold.florisboard.ime.stt.SttResult
 import dev.patrickgold.florisboard.ime.stt.SttState
+import dev.patrickgold.florisboard.lib.devtools.LogTopic
+import dev.patrickgold.florisboard.lib.devtools.flogError
+import dev.patrickgold.florisboard.lib.devtools.flogInfo
+import dev.patrickgold.florisboard.lib.devtools.flogWarning
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -51,6 +55,12 @@ import java.util.concurrent.TimeUnit
  *       POST audio to Deepgram -> parse transcript -> commit text to editor.
  */
 class DeepgramAdapter(private val apiKey: String) : StreamingSttProvider {
+    private companion object {
+        private const val LOG_PREFIX = "Ananya"
+        private const val API_BASE_URL = "https://api.deepgram.com"
+        private const val SAMPLE_RATE = 16000
+    }
+
     override val providerId = "org.florisboard.stt.providers.deepgram"
 
     private val _sttState = MutableStateFlow<SttState>(SttState.Idle)
@@ -67,26 +77,37 @@ class DeepgramAdapter(private val apiKey: String) : StreamingSttProvider {
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    private fun ensureHttpClient() {
+        if (httpClient == null) {
+            httpClient = OkHttpClient.Builder()
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .writeTimeout(60, TimeUnit.SECONDS)
+                .build()
+        }
+    }
+
     override suspend fun create() {
-        httpClient = OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
-            .build()
+        flogInfo(LogTopic.STT) { "$LOG_PREFIX Creating Deepgram HTTP client" }
+        ensureHttpClient()
     }
 
     override suspend fun destroy() {
+        flogInfo(LogTopic.STT) { "$LOG_PREFIX Destroying Deepgram adapter" }
         cancelListening()
         httpClient?.dispatcher?.executorService?.shutdown()
         httpClient = null
     }
 
     override suspend fun isAvailable(): Boolean {
-        return apiKey.isNotBlank() && httpClient != null
+        val available = apiKey.isNotBlank()
+        flogInfo(LogTopic.STT) { "$LOG_PREFIX Deepgram availability check: available=$available clientReady=${httpClient != null}" }
+        return available
     }
 
     @SuppressLint("MissingPermission")
     override suspend fun startListening() {
+        flogInfo(LogTopic.STT) { "$LOG_PREFIX Starting Deepgram audio capture" }
         audioBuffer.reset()
         _resultFlow.value = SttResult.Empty
 
@@ -96,9 +117,11 @@ class DeepgramAdapter(private val apiKey: String) : StreamingSttProvider {
             AudioFormat.ENCODING_PCM_16BIT,
         )
         if (bufferSize == AudioRecord.ERROR || bufferSize == AudioRecord.ERROR_BAD_VALUE) {
+            flogError(LogTopic.STT) { "$LOG_PREFIX Deepgram audio buffer size lookup failed: bufferSize=$bufferSize" }
             _sttState.value = SttState.Error(SttError.AudioError("Failed to determine audio buffer size"))
             return
         }
+        flogInfo(LogTopic.STT) { "$LOG_PREFIX Deepgram audio buffer size resolved: $bufferSize bytes" }
 
         val recorder = try {
             AudioRecord(
@@ -109,18 +132,21 @@ class DeepgramAdapter(private val apiKey: String) : StreamingSttProvider {
                 bufferSize,
             )
         } catch (e: Exception) {
+            flogError(LogTopic.STT) { "$LOG_PREFIX Failed to create AudioRecord: ${e.message}" }
             _sttState.value = SttState.Error(SttError.AudioError("Failed to create AudioRecord: ${e.message}"))
             return
         }
 
         if (recorder.state != AudioRecord.STATE_INITIALIZED) {
             recorder.release()
+            flogError(LogTopic.STT) { "$LOG_PREFIX AudioRecord failed to initialize" }
             _sttState.value = SttState.Error(SttError.AudioError("AudioRecord failed to initialize"))
             return
         }
 
         audioRecord = recorder
         recorder.startRecording()
+        flogInfo(LogTopic.STT) { "$LOG_PREFIX Deepgram audio capture started" }
         _sttState.value = SttState.Listening
 
         recordingJob = scope.launch {
@@ -138,6 +164,7 @@ class DeepgramAdapter(private val apiKey: String) : StreamingSttProvider {
 
     override suspend fun stopListening() {
         val recorder = audioRecord ?: run {
+            flogWarning(LogTopic.STT) { "$LOG_PREFIX stopListening called without an active recorder" }
             _sttState.value = SttState.Idle
             return
         }
@@ -154,8 +181,13 @@ class DeepgramAdapter(private val apiKey: String) : StreamingSttProvider {
             pcmData = audioBuffer.toByteArray()
             audioBuffer.reset()
         }
+        flogInfo(LogTopic.STT) { "$LOG_PREFIX Stopped Deepgram recording, captured ${pcmData.size} bytes of PCM audio" }
 
         if (pcmData.isEmpty()) {
+            flogError(LogTopic.STT) { "$LOG_PREFIX No audio captured after releasing the voice button" }
+            _resultFlow.value = SttResult.Error(
+                SttError.AudioError("No audio captured after releasing the voice button")
+            )
             _sttState.value = SttState.Idle
             return
         }
@@ -168,6 +200,7 @@ class DeepgramAdapter(private val apiKey: String) : StreamingSttProvider {
     }
 
     override suspend fun cancelListening() {
+        flogInfo(LogTopic.STT) { "$LOG_PREFIX Cancelling Deepgram audio capture" }
         recordingJob?.cancel()
         recordingJob = null
         audioRecord?.let { recorder ->
@@ -184,11 +217,15 @@ class DeepgramAdapter(private val apiKey: String) : StreamingSttProvider {
     }
 
     private suspend fun transcribe(pcmData: ByteArray): SttResult = withContext(Dispatchers.IO) {
+        ensureHttpClient()
         val client = httpClient ?: return@withContext SttResult.Error(
             SttError.ServiceUnavailable("HTTP client not initialized")
         )
 
         val wavData = encodeWav(pcmData)
+        flogInfo(LogTopic.STT) {
+            "$LOG_PREFIX Sending Deepgram request pcmBytes=${pcmData.size} wavBytes=${wavData.size} sampleRate=$SAMPLE_RATE"
+        }
 
         val requestBody = wavData.toRequestBody("audio/wav".toMediaType())
         val request = Request.Builder()
@@ -200,8 +237,14 @@ class DeepgramAdapter(private val apiKey: String) : StreamingSttProvider {
         try {
             val response = client.newCall(request).execute()
             val body = response.body?.string()
+            flogInfo(LogTopic.STT) {
+                "$LOG_PREFIX Deepgram response received code=${response.code} bodyLength=${body?.length ?: 0}"
+            }
 
             if (!response.isSuccessful) {
+                flogError(LogTopic.STT) {
+                    "$LOG_PREFIX Deepgram request failed code=${response.code} body='${body?.take(300)}'"
+                }
                 return@withContext when (response.code) {
                     401, 403 -> SttResult.Error(
                         SttError.AuthenticationError("Deepgram API key invalid (HTTP ${response.code})")
@@ -221,15 +264,21 @@ class DeepgramAdapter(private val apiKey: String) : StreamingSttProvider {
                 ?.firstOrNull()?.alternatives
                 ?.firstOrNull()?.transcript
                 ?: ""
+            flogInfo(LogTopic.STT) {
+                "$LOG_PREFIX Deepgram transcript parsed length=${transcript.length} text='${transcript.take(120)}'"
+            }
 
             if (transcript.isBlank()) {
-                SttResult.Final("")
+                flogError(LogTopic.STT) { "$LOG_PREFIX Deepgram returned an empty final transcript" }
+                SttResult.Error(SttError.Unknown("Deepgram returned an empty final transcript"))
             } else {
                 SttResult.Final(transcript)
             }
         } catch (e: java.io.IOException) {
+            flogError(LogTopic.STT) { "$LOG_PREFIX Deepgram network error: ${e.message}" }
             SttResult.Error(SttError.NetworkError("Network error: ${e.message}"))
         } catch (e: Exception) {
+            flogError(LogTopic.STT) { "$LOG_PREFIX Deepgram transcription failure: ${e.message}" }
             SttResult.Error(SttError.Unknown("Transcription failed: ${e.message}", e))
         }
     }
@@ -282,8 +331,4 @@ class DeepgramAdapter(private val apiKey: String) : StreamingSttProvider {
         write((value shr 8) and 0xFF)
     }
 
-    companion object {
-        private const val API_BASE_URL = "https://api.deepgram.com"
-        private const val SAMPLE_RATE = 16000
-    }
 }
