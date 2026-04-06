@@ -80,11 +80,11 @@
     "foreground": "var(--on-surface)"
   },
   "key[code=10]": {
-    "background": "var(--primary)",
+    "background": "var(--surface)",
     "foreground": "var(--on-surface)"
   },
   "key[code=10]:pressed": {
-    "background": "var(--primary-variant)",
+    "background": "var(--surface-variant)",
     "foreground": "var(--on-surface)"
   },
   "key[code=32]": {

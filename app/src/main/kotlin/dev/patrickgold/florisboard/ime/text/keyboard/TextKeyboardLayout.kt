@@ -343,7 +343,7 @@ private fun TextKeyButton(
         key.label?.let { label ->
             var customLabel = label
             if (key.computedData.code == KeyCode.SPACE) {
-                customLabel = "testing 2"
+                customLabel = "Floris (voice)"
             }
             SnyggText(
                 modifier = Modifier
