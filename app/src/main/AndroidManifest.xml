@@ -8,6 +8,12 @@
     <!-- Permission needed to create notifications on devices running Android 13+ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+    <!-- Permission needed for built-in speech-to-text (STT) functionality -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+
+    <!-- Permission needed for cloud-based STT providers (e.g. Deepgram) -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <!-- Android 11+ only: Define that FlorisBoard requests to see all apps that
           ship with an IME or Spell Check service. This is used to guide the user
           in the Settings Ui why FlorisBoard may not be working.

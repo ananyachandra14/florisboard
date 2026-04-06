@@ -17,6 +17,7 @@
 package dev.patrickgold.florisboard.ime.smartbar.quickaction
 
 import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -26,21 +27,28 @@ import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import dev.patrickgold.compose.tooltip.PlainTooltip
 import dev.patrickgold.florisboard.ime.input.LocalInputFeedbackController
 import dev.patrickgold.florisboard.ime.keyboard.ComputingEvaluator
 import dev.patrickgold.florisboard.ime.keyboard.computeImageVector
 import dev.patrickgold.florisboard.ime.keyboard.computeLabel
+import dev.patrickgold.florisboard.ime.text.key.KeyCode
 import dev.patrickgold.florisboard.ime.text.keyboard.TextKeyData
 import dev.patrickgold.florisboard.ime.theme.FlorisImeUi
+import androidx.compose.foundation.shape.CircleShape
 import org.florisboard.lib.snygg.SnyggSelector
 import org.florisboard.lib.snygg.ui.SnyggBox
 import org.florisboard.lib.snygg.ui.SnyggIcon
@@ -70,6 +78,7 @@ fun QuickActionButton(
         QuickActionBarType.EDITOR_TILE -> FlorisImeUi.SmartbarActionsEditorTile
     }.elementName
     val attributes = mapOf(FlorisImeUi.Attr.Code to action.keyData().code)
+    val isVoiceAction = action.keyData().code == KeyCode.VOICE_INPUT
     val selector = when {
         isPressed -> SnyggSelector.PRESSED
         !isEnabled -> SnyggSelector.DISABLED
@@ -86,7 +95,10 @@ fun QuickActionButton(
         }
     }
 
-    PlainTooltip(action.computeTooltip(evaluator), enabled = type == QuickActionBarType.INTERACTIVE_BUTTON) {
+    PlainTooltip(
+        action.computeTooltip(evaluator),
+        enabled = type == QuickActionBarType.INTERACTIVE_BUTTON && !isVoiceAction,
+    ) {
         SnyggBox(
             elementName = elementName,
             attributes = attributes,
@@ -130,8 +142,21 @@ fun QuickActionButton(
                                 elementName = "$elementName-icon",
                                 attributes = attributes,
                                 selector = selector,
+                                modifier = if (isVoiceAction) {
+                                    Modifier
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (isPressed) Color(0xFFD46A6A) else Color(0xFFB94A48)
+                                        )
+                                        .padding(8.dp)
+                                } else {
+                                    Modifier
+                                },
                             ) {
-                                SnyggIcon(imageVector = imageVector)
+                                SnyggIcon(
+                                    modifier = if (isVoiceAction) Modifier.size(24.dp) else Modifier,
+                                    imageVector = imageVector,
+                                )
                             }
                         } else if (label != null) {
                             SnyggText(

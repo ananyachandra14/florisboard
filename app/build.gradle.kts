@@ -17,6 +17,8 @@
 import com.android.build.api.dsl.ApplicationExtension
 import org.gradle.api.tasks.testing.logging.TestLogEvent
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.io.FileInputStream
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.agp.application)
@@ -78,6 +80,15 @@ configure<ApplicationExtension> {
         buildConfigField("String", "BUILD_COMMIT_HASH", "\"${getGitCommitHash().get()}\"")
         buildConfigField("String", "FLADDONS_API_VERSION", "\"v~draft2\"")
         buildConfigField("String", "FLADDONS_STORE_URL", "\"beta.addons.florisboard.org\"")
+
+        val localProps = rootProject.file("local.properties")
+        val deepgramApiKey = if (localProps.exists()) {
+            val props = FileInputStream(localProps).use { fis ->
+                Properties().also { it.load(fis) }
+            }
+            props.getProperty("DEEPGRAM_API_KEY") ?: ""
+        } else ""
+        buildConfigField("String", "DEEPGRAM_API_KEY", "\"$deepgramApiKey\"")
 
         sourceSets {
             maybeCreate("main").apply {
@@ -203,6 +214,7 @@ dependencies {
     implementation(libs.kotlin.reflect)
     implementation(libs.kotlinx.coroutines)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.okhttp)
     implementation(libs.mikepenz.aboutlibraries.core)
     implementation(libs.mikepenz.aboutlibraries.compose)
     implementation(libs.patrickgold.compose.tooltip)
